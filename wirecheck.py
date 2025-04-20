@@ -1,141 +1,149 @@
-# import pyshark
-# import pandas as pd
-# import os
-
-# # Load the pcap file (only TCP zero-length packets)
-# pcap_file = "/home/lab512/Downloads/Discord_1.pcap"
-# cap = pyshark.FileCapture(pcap_file, display_filter="tcp")
-
-# # Dictionary to store cumulative bytes per flow
-# flows = {}
-
-# # Process packets
-# for pkt in cap:
-#     try:
-#         # Extract TCP info
-#         src_ip = pkt.ip.src
-#         dst_ip = pkt.ip.dst
-#         src_port = pkt.tcp.srcport
-#         dst_port = pkt.tcp.dstport
-#         seq = int(pkt.tcp.seq)  # Sequence number
-#         ack = int(pkt.tcp.ack)  # Acknowledgment number
-#         length = int(pkt.tcp.len) if hasattr(pkt.tcp, "len") else 0  # TCP payload length
-
-#         # Define flow_id as (A, A_port, B, B_port) in a fixed order
-#         if (src_ip, src_port) < (dst_ip, dst_port):
-#             flow_id = (src_ip, src_port, dst_ip, dst_port)
-#             is_sender_A = True  # A → B direction
-#         else:
-#             flow_id = (dst_ip, dst_port, src_ip, src_port)
-#             is_sender_A = False  # B → A direction
-
-#         # Initialize flow tracking if not exists
-#         if flow_id not in flows:
-#             flows[flow_id] = [(0, 0)]  # Initial state: (bytes_sent_by_A, bytes_sent_by_B)
-
-#         # Get the last recorded bytes tuple
-#         last_A, last_B = flows[flow_id][-1]
-
-#         # Update bytes depending on sender
-#         if is_sender_A:
-#             last_A = ack  # Sender is A (increment A's bytes)
-#         else:
-#             last_B = ack  # Sender is B (increment B's bytes)
-
-#         # Append updated tuple to flow tracking
-#         flows[flow_id].append((last_A, last_B))
-
-#     except AttributeError:
-#         continue  # Ignore packets without required fields
-
-# # Print result
-# print("Cumulative Bytes per Flow:")
-# for flow, values in flows.items():
-#     print(f"Flow {flow}: {values}")
-
-# # Convert to DataFrame for analysis
-# flow_data = []
-# for flow, values in flows.items():
-#     for i, (bytes_A, bytes_B) in enumerate(values):
-#         flow_data.append([flow, i, bytes_A, bytes_B])
-
-# df = pd.DataFrame(flow_data, columns=["Flow ID", "Packet Index", "Bytes Sent by A", "Bytes Sent by B"])
-
-# # Save CSV output
-# output_dir = "/home/lab512/dataset_csv"
-# os.makedirs(output_dir, exist_ok=True)
-# csv_path = os.path.join(output_dir, "Discord_Flows.csv")
-# df.to_csv(csv_path, index=False)
-
-# print("CSV file created successfully!")
-
-
+import os
+import glob
+import random
 import pyshark
 import pandas as pd
-import os
+import joblib
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
 
-pcap_file = "/home/lab512/Downloads/Discord_1.pcap"
-cap = pyshark.FileCapture(pcap_file, display_filter="tcp.len == 0")
+MAX_SIG_LEN = 4
 
-flows = {}
 
-for pkt in cap:
+def normalize_flow(src_ip, src_port, dst_ip, dst_port):
+    if (src_ip, int(src_port)) < (dst_ip, int(dst_port)):
+        return (src_ip, int(src_port), dst_ip, int(dst_port)), "A"
+    else:
+        return (dst_ip, int(dst_port), src_ip, int(src_port)), "B"
+
+
+def extract_aapdus_from_pcap(pcap_path):
+    cap = pyshark.FileCapture(pcap_path, display_filter="tcp && tcp.len == 0")
+    flows = {}
+
     try:
-        src_ip = pkt.ip.src
-        dst_ip = pkt.ip.dst
-        src_port = pkt.tcp.srcport
-        dst_port = pkt.tcp.dstport
-        seq = int(pkt.tcp.seq)
-        ack = int(pkt.tcp.ack)
+        for pkt in cap:
+            if "IP" not in pkt or "TCP" not in pkt:
+                continue
 
-        # Consistent flow ID: (A_IP, A_Port, B_IP, B_Port)
-        if (src_ip, src_port) < (dst_ip, dst_port):
-            flow_id = (src_ip, src_port, dst_ip, dst_port)
-            direction = "A"
-        else:
-            flow_id = (dst_ip, dst_port, src_ip, src_port)
-            direction = "B"
+            try:
+                src_ip = pkt.ip.src
+                dst_ip = pkt.ip.dst
+                src_port = pkt.tcp.srcport
+                dst_port = pkt.tcp.dstport
+                ack = int(pkt.tcp.ack)
+                seq = int(pkt.tcp.seq)
 
-        if flow_id not in flows:
-            flows[flow_id] = {
-                "history": [],               # list of (bytes_A, bytes_B)
-                "last_bytes_A": 0,
-                "last_bytes_B": 0,
-                "last_direction": None
-            }
+                flow_id, _ = normalize_flow(src_ip, src_port, dst_ip, dst_port)
 
-        flow = flows[flow_id]
+                if flow_id not in flows:
+                    flows[flow_id] = {
+                        "records": [],
+                        "init_ip": src_ip,
+                        "init_port": int(src_port),
+                        "last_dir": None
+                    }
 
-        # Update cumulative bytes
-        if direction == "A":
-            new_bytes_A = ack
-            new_bytes_B = flow["last_bytes_B"]
-        else:
-            new_bytes_A = flow["last_bytes_A"]
-            new_bytes_B = ack
+                flow = flows[flow_id]
+                is_initiator = (src_ip == flow["init_ip"] and int(src_port) == flow["init_port"])
+                current_dir = "A" if is_initiator else "B"
 
-        # Add new a-APDU record if direction changed
-        if flow["last_direction"] != direction:
-            flow["history"].append((new_bytes_A, new_bytes_B))
-            flow["last_direction"] = direction
+                if flow["last_dir"] != current_dir:
+                    apdu = (ack, seq) if is_initiator else (seq, ack)
+                    flow["records"].append(apdu)
+                    flow["last_dir"] = current_dir
 
-        # Update tracked values
-        flow["last_bytes_A"] = new_bytes_A
-        flow["last_bytes_B"] = new_bytes_B
+                if len(flow["records"]) >= MAX_SIG_LEN:
+                    continue
 
-    except AttributeError:
-        continue
+            except AttributeError:
+                continue
+    finally:
+        cap.close()
 
-# Save to CSV
-output_dir = "/home/lab512/dataset_csv"
-os.makedirs(output_dir, exist_ok=True)
+    return flows
 
-rows = []
-for flow_id, data in flows.items():
-    for idx, (bytes_A, bytes_B) in enumerate(data["history"]):
-        rows.append([flow_id, idx, bytes_A, bytes_B])
 
-df = pd.DataFrame(rows, columns=["Flow ID", "a-APDU Index", "Bytes Sent by A", "Bytes Sent by B"])
-df.to_csv(os.path.join(output_dir, "Discord_aAPDU.csv"), index=False)
+def convert_flows_to_features(flows, label):
+    features = []
+    for _, flow in flows.items():
+        apdus = flow["records"][:MAX_SIG_LEN]
+        flat = [x for tup in apdus for x in tup]
+        while len(flat) < MAX_SIG_LEN * 2:
+            flat += [0, 0]
+        flat.append(label)
+        features.append(flat)
+    return features
 
-print("✅ a-APDU CSV created successfully!")
+
+def process_all_pcaps(pcap_root, output_dir):
+    all_pcaps = glob.glob(os.path.join(pcap_root, "**/*.pcap*"), recursive=True)
+    random.shuffle(all_pcaps)
+
+    data = []
+
+    for pcap_path in all_pcaps:
+        label = os.path.basename(os.path.dirname(pcap_path)).capitalize()
+        print(f"📥 Processing {pcap_path} → {label}")
+        try:
+            flows = extract_aapdus_from_pcap(pcap_path)
+            features = convert_flows_to_features(flows, label)
+            data.extend(features)
+        except Exception as e:
+            print(f"⚠️ Failed to process {pcap_path}: {e}")
+
+    df = pd.DataFrame(data, columns=[f"feat_{i}" for i in range(MAX_SIG_LEN * 2)] + ["label"])
+    full_csv = os.path.join(output_dir, "all_features2.csv")
+    df.to_csv(full_csv, index=False)
+    print(f"✅ Full dataset saved to: {full_csv}")
+    return df
+
+
+def split_train_test(df, train_ratio=0.7):
+    df_shuffled = df.sample(frac=1, random_state=42).reset_index(drop=True)
+    split_idx = int(len(df_shuffled) * train_ratio)
+    return df_shuffled[:split_idx], df_shuffled[split_idx:]
+
+
+def train_model(train_df, model_path):
+    X_train = train_df.drop("label", axis=1)
+    y_train = train_df["label"]
+    clf = RandomForestClassifier(
+    n_estimators=100,
+    criterion="entropy",
+    max_depth=None,         
+    max_features="sqrt",     
+    bootstrap=True,
+    random_state=42)
+    clf.fit(X_train, y_train)
+    joblib.dump(clf, model_path)
+    print(f"✅ Model saved to: {model_path}")
+    return clf
+
+
+def evaluate_model(clf, test_df):
+    X_test = test_df.drop("label", axis=1)
+    y_test = test_df["label"]
+    y_pred = clf.predict(X_test)
+    print("\n📊 Classification Report:")
+    print(classification_report(y_test, y_pred))
+    print(f"✅ Accuracy: {accuracy_score(y_test, y_pred):.2f}")
+
+
+if __name__ == "__main__":
+    pcap_dir = "/home/lab512/Network-Traffic-Dataset"  # Folder with subfolders like Zoom/, Skype/
+    output_dir = "/home/lab512/dataset_csv"
+    model_path = os.path.join(output_dir, "model2.pkl")
+    os.makedirs(output_dir, exist_ok=True)
+
+    print("🚀 Starting end-to-end PCAP classification pipeline...\n")
+
+    df = process_all_pcaps(pcap_dir, output_dir)
+    train_df, test_df = split_train_test(df)
+
+    clf = train_model(train_df, model_path)
+    evaluate_model(clf, test_df)
+
+
+
