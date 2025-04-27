@@ -8,7 +8,7 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, accuracy_score
 
-MAX_SIG_LEN = 4
+MAX_SIG_LEN = 8
 
 
 def normalize_flow(src_ip, src_port, dst_ip, dst_port):
@@ -77,13 +77,26 @@ def convert_flows_to_features(flows, label):
     return features
 
 
-def process_all_pcaps(pcap_root, output_dir):
+def process_all_pcaps(pcap_root, output_dir, max_pcaps_per_class=100):
+    class_pcap_dict = {}
+
+    # Step 1: Organize PCAPs by class (folder name)
     all_pcaps = glob.glob(os.path.join(pcap_root, "**/*.pcap*"), recursive=True)
-    random.shuffle(all_pcaps)
-
-    data = []
-
     for pcap_path in all_pcaps:
+        label = os.path.basename(os.path.dirname(pcap_path)).capitalize()
+        class_pcap_dict.setdefault(label, []).append(pcap_path)
+
+    # Step 2: Limit number of PCAPs per class
+    selected_pcaps = []
+    for label, pcaps in class_pcap_dict.items():
+        random.shuffle(pcaps)
+        selected_pcaps.extend(pcaps[:max_pcaps_per_class])
+    
+    random.shuffle(selected_pcaps)
+
+    # Step 3: Process each selected pcap
+    data = []
+    for pcap_path in selected_pcaps:
         label = os.path.basename(os.path.dirname(pcap_path)).capitalize()
         print(f"📥 Processing {pcap_path} → {label}")
         try:
@@ -93,11 +106,13 @@ def process_all_pcaps(pcap_root, output_dir):
         except Exception as e:
             print(f"⚠️ Failed to process {pcap_path}: {e}")
 
+    # Step 4: Save and return
     df = pd.DataFrame(data, columns=[f"feat_{i}" for i in range(MAX_SIG_LEN * 2)] + ["label"])
-    full_csv = os.path.join(output_dir, "all_features2.csv")
+    full_csv = os.path.join(output_dir, "all_features5.csv")
     df.to_csv(full_csv, index=False)
     print(f"✅ Full dataset saved to: {full_csv}")
     return df
+
 
 
 def split_train_test(df, train_ratio=0.7):
@@ -109,13 +124,7 @@ def split_train_test(df, train_ratio=0.7):
 def train_model(train_df, model_path):
     X_train = train_df.drop("label", axis=1)
     y_train = train_df["label"]
-    clf = RandomForestClassifier(
-    n_estimators=100,
-    criterion="entropy",
-    max_depth=None,         
-    max_features="sqrt",     
-    bootstrap=True,
-    random_state=42)
+    clf = RandomForestClassifier(criterion="entropy")
     clf.fit(X_train, y_train)
     joblib.dump(clf, model_path)
     print(f"✅ Model saved to: {model_path}")
@@ -134,12 +143,12 @@ def evaluate_model(clf, test_df):
 if __name__ == "__main__":
     pcap_dir = "/home/lab512/Network-Traffic-Dataset"  # Folder with subfolders like Zoom/, Skype/
     output_dir = "/home/lab512/dataset_csv"
-    model_path = os.path.join(output_dir, "model2.pkl")
+    model_path = os.path.join(output_dir, "model5.pkl")
     os.makedirs(output_dir, exist_ok=True)
 
     print("🚀 Starting end-to-end PCAP classification pipeline...\n")
 
-    df = process_all_pcaps(pcap_dir, output_dir)
+    df = process_all_pcaps(pcap_dir, output_dir,max_pcaps_per_class=100)
     train_df, test_df = split_train_test(df)
 
     clf = train_model(train_df, model_path)
