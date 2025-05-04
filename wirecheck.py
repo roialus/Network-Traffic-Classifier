@@ -11,6 +11,8 @@ import threading
 import time
 import matplotlib.pyplot as plt
 from scapy.all import sniff, IP, TCP  # Add to your imports at the top
+from sklearn.decomposition import PCA
+
 
 FLOW_TIMEOUT = 30  # seconds to forget inactive flows
 MAX_SIG_LEN = 8
@@ -311,7 +313,7 @@ def classify_single_pcap(pcap_path, model_path):
         print(f"📡 Flow {i+1}: Predicted application ➡️ {pred}")
 
 if __name__ == "__main__":
-    mode = input("Choose mode: [train/live/plot/test]: ").strip().lower()
+    mode = input("Choose mode: [train/live/plot/test/compare]: ").strip().lower()
     
     pcap_dir = "/home/lab512/Network-Traffic-Dataset" 
     output_dir = "/home/lab512/dataset_csv"              
@@ -353,6 +355,59 @@ if __name__ == "__main__":
     elif mode == "test":
         pcap_path = input("Enter path to the pcap file: ").strip()
         classify_single_pcap(pcap_path, model_path)
+
+    elif mode == "compare":
+        old_csv_path = "/home/lab512/dataset_csv/all_features5.csv"
+        new_pcap_dir = "/home/lab512/tcp-traffic-capture/dataset/Facebook"
+        temp_out = "./_new_feature_extract"
+        os.makedirs(temp_out, exist_ok=True)
+        max_pcaps_new = 3
+        max_sig_len = 8  # or use MAX_SIG_LEN if already global
+
+        print("📊 Comparing OLD Facebook dataset vs NEW Facebook PCAPs...")
+
+        # Load and filter old dataset
+        old_df = pd.read_csv(old_csv_path)
+        old_df = old_df[old_df["label"].str.lower() == "facebook"]
+        old_df["dataset"] = "old"
+
+        # Extract new Facebook features
+        new_df = process_all_pcaps(
+            pcap_root=new_pcap_dir,
+            output_dir=temp_out,
+            max_pcaps_per_class=max_pcaps_new
+        )
+        new_df["dataset"] = "new"
+
+        # Combine
+        combined = pd.concat([old_df, new_df], ignore_index=True)
+
+        import seaborn as sns
+        sns.set(style="whitegrid")
+        for i in range(max_sig_len * 2):
+            col = f"feat_{i}"
+            plt.figure(figsize=(6, 3))
+            sns.kdeplot(data=combined, x=col, hue="dataset", common_norm=False, fill=True)
+            plt.title(f"Feature: {col} — Old vs New Facebook")
+            plt.tight_layout()
+            plt.savefig(f"feature_kde_feat_{i}.png")
+            plt.close()
+
+
+        # PCA
+        print("🔬 Performing PCA...")
+        X_all = combined.drop(columns=["label", "dataset"], errors="ignore")
+        pca = PCA(n_components=2)
+        X_pca = pca.fit_transform(X_all)
+        combined["PC1"] = X_pca[:, 0]
+        combined["PC2"] = X_pca[:, 1]
+
+        plt.figure(figsize=(7, 5))
+        sns.scatterplot(data=combined, x="PC1", y="PC2", hue="dataset", style="dataset", s=60)
+        plt.title("PCA: Old vs New Facebook Feature Space")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
 
     else:
         print("❌ Invalid mode. Choose 'train', 'live', or 'plot_acc_vs_len'.")
