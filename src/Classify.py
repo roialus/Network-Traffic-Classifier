@@ -241,7 +241,7 @@ class LiveFlowClassifier:
 
     def cleanup_old_flows(self):
         while self.running:
-            time.sleep(10)
+            time.sleep(120)
             now = time.time()
             with self.lock:
                 to_remove = [fid for fid, flow in self.flows.items() if (now - flow["last_seen"]) > FLOW_TIMEOUT]
@@ -316,9 +316,9 @@ if __name__ == "__main__":
     mode = input("Choose mode: [train/live/plot/test/compare]: ").strip().lower()
     
     pcap_dir = "/home/lab512/Network-Traffic-Dataset" 
-    output_dir = "/home/lab512/dataset_csv"              
-    model_path_train = os.path.join(output_dir, "model6.pkl")
-    model_path = os.path.join(output_dir, "model4_91%.pkl")
+    output_dir = "/home/lab512/tcp-traffic-capture/dataset_csv"              
+    model_path_train = os.path.join(output_dir, "model7.pkl")
+    model_path = os.path.join(output_dir, "model7.pkl")
     os.makedirs(output_dir, exist_ok=True)
 
     if mode == "train":
@@ -350,7 +350,7 @@ if __name__ == "__main__":
             min_len=1,    # start from small number of packets
             max_len=10,   # up to longer packet flows
             step=1,       # step size
-            max_pcaps_per_class=50
+            max_pcaps_per_class=30
         )
     elif mode == "test":
         pcap_path = input("Enter path to the pcap file: ").strip()
@@ -361,7 +361,7 @@ if __name__ == "__main__":
         new_pcap_dir = "/home/lab512/tcp-traffic-capture/dataset/Facebook"
         temp_out = "./_new_feature_extract"
         os.makedirs(temp_out, exist_ok=True)
-        max_pcaps_new = 3
+        max_pcaps_new = 20
         max_sig_len = 8  # or use MAX_SIG_LEN if already global
 
         print("📊 Comparing OLD Facebook dataset vs NEW Facebook PCAPs...")
