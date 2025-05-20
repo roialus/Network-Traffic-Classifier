@@ -31,16 +31,7 @@ python3 Classify.py
 - compare – Compare feature distributions of old vs. new flows
 
 ### Dataset Format
-Place PCAP files in subdirectories named after the application (e.g., Zoom/, Discord/). The directory structure should be:
-
-/path/to/dataset/
-    ├── Zoom/
-    │   ├── capture1.pcap
-    │   └── ...
-    ├── Discord/
-    │   ├── capture1.pcap
-    │   └── ...
-
+Place PCAP files in subdirectories named after the application (e.g., Zoom/, Discord/). Can be downloaded from Drive.
 ### Requirements
 - Python 3.8+
 - scikit-learn
