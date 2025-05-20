@@ -17,7 +17,9 @@
 
 ### Usage
 Run the main script and choose a mode:
-python main.py
+'''
+python3 Classify.py
+'''
 
 ### Available modes:
 - train – Train a model from a labeled PCAP dataset
