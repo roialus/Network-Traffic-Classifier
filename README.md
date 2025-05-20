@@ -18,7 +18,8 @@
 ### Usage
 Run the main script and choose a mode:
 ```bash
-python3 Classify.py```
+python3 Classify.py
+```
 
 
 
