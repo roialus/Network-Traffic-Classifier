@@ -17,9 +17,10 @@
 
 ### Usage
 Run the main script and choose a mode:
-'''
-python3 Classify.py
-'''
+```bash
+python3 Classify.py```
+
+
 
 ### Available modes:
 - train – Train a model from a labeled PCAP dataset
